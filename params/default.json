@@ -1,6 +1,6 @@
 {
   "numberOfCars": 5,
-  "carCapacity": 5,
+  "carCapacity": 1000,
   "base": { "name": "Kraków", "x": 50.06, "y": 19.94 },
   "clients": [
       { "name": "Białystok", "x": 53.13, "y": 23.17, "demand": 500 },

@@ -17,9 +17,23 @@ interface AppConfig {
   base: Base;
   clients: Client[]
   numberOfClients: number;
+  numberOfIterations?: number;
+  alpha?: number;
+  beta?: number;
+  rho?: number;
 }
 
-// error handling for standalone app
+interface CarRoute {
+  route: number[];
+  distance: number;
+}
+
+interface Solution {
+  routes: CarRoute[];
+  totalDistance: number;
+}
+
+// error handling dla zbudowanej apki - odkomentowac przed buildem
 // process.on("uncaughtException", function (err) {
 //   console.log(err);
 //   process.stdin.resume();
@@ -28,7 +42,8 @@ interface AppConfig {
 let appConfig: AppConfig;
 let distanceMatrix: number[][];
 let pheromoneMatrix: number[][];
-let demandMatrix: number[];
+let demandMatrix: number[]; // demand działa jako tablica - kiedy demand dla lokacji spada do 0, zostaje wykluczona z dalszego losowania
+let bestSolution: Solution = { } as any;
 
 const getConfig = (): AppConfig => {
   // TODO add custom config handling
@@ -85,16 +100,126 @@ const getProbabilities = ({ locationIndex, alpha = 1, beta = 1 } : {locationInde
   return probabilities;
 }
 
+const drawDestination = (probabilities: number[]) => {
+  let tweakedProbabilities = new Array<{probability: number, originalIndex: number}>();
+  let cumulativeSums = new Array<{cumulativeSum: number, originalIndex: number}>();
+  let destinationIndex: number;
+
+  tweakedProbabilities = probabilities.map((prob, index) => ({ probability: prob, originalIndex: index})).filter(tProb => tProb.probability != 0);
+  for (let i = 0; i < tweakedProbabilities.length; i++) {
+    // suma wszystkich elementow po prawej od obecnego z obecnym włącznie
+    cumulativeSums.push({ cumulativeSum: _.sumBy(tweakedProbabilities.slice(i), 'probability'), originalIndex: tweakedProbabilities[i].originalIndex});
+  }
+  // losujemy liczbe z zakresu od 0 do 1
+  const random = Math.random();
+  const cumulativeSumsAboveOrEqualToRandomValue = cumulativeSums.filter(cSum => cSum.cumulativeSum >= random).length;
+  // edge case when every value is bigger or equal to random value
+  if (cumulativeSumsAboveOrEqualToRandomValue === cumulativeSums.length) {
+    destinationIndex = cumulativeSums[cumulativeSums.length-1].originalIndex
+  } else {
+    destinationIndex = cumulativeSums[cumulativeSumsAboveOrEqualToRandomValue].originalIndex
+  }
+  return destinationIndex;
+}
+
+const getSolution = (): Solution => {
+  const numberOfCars = appConfig.numberOfCars;
+  const carCapacity = appConfig.carCapacity;
+  let solution = new Array<CarRoute>();
+
+  for (let i = numberOfCars; i > 0; i--) {
+    solution.push(getCarRoute(carCapacity));
+  }
+
+  return { totalDistance: _.sumBy(solution, 'distance'), routes: solution};
+}
+
+const getCarRoute = (carCapacity: number): CarRoute => {
+  let locationIndex: number = 0; // startujemy w bazie
+  let carDistance: number = 0; // dystans przebyty przez samochód
+  let route = new Array<number>();
+  route.push(0); // punkt startowy
+  while (carCapacity > 0 && _.sum(demandMatrix) > 0) {
+    let destinationIndex = drawDestination(getProbabilities({ locationIndex, alpha: appConfig.alpha, beta: appConfig.beta }));
+    // case gdy miast ma wieksze zapotrzebowanie niz zostalo towaru w samochodzie
+    if (demandMatrix[destinationIndex] > carCapacity) {
+      demandMatrix[destinationIndex]-=carCapacity;
+      carCapacity = 0;
+    } else {
+      carCapacity-=demandMatrix[destinationIndex];
+      demandMatrix[destinationIndex] = 0;
+    }
+    carDistance += distanceMatrix[locationIndex][destinationIndex];
+    locationIndex = destinationIndex;
+    route.push(locationIndex);
+  }
+  // powrót do bazy
+  route.push(0);
+  carDistance+=distanceMatrix[locationIndex][0];
+  return { route, distance: carDistance };
+}
+
+const updateFeromones = ({solution, rho = 0.5}: {solution: Solution, rho?: number}) => {
+  let newPheromoneMatrix = Object.assign(new Array<number[]>(), pheromoneMatrix);
+  let indexes = new Array<{xIndex: number, yIndex: number}>();
+  const routes = solution.routes.map(r => r.route);
+  for (let i = 0; i < routes.length; i++) {
+    indexes = indexes.concat(getIndexes(routes[i]));
+  }
+  // obliczamy zmiane feromonow dla kazdej z drogi zaleznie od tego czy pojawila sie ona w wynikach
+  for (let i = 0; i < newPheromoneMatrix.length; i++) {
+    for (let j = 0; j < newPheromoneMatrix.length; j++) {
+      if (indexes.some(index => _.isEqual(index, { xIndex: i, yIndex: j}))) {
+        newPheromoneMatrix[i][j] = newPheromoneMatrix[i][j] * rho + newPheromoneMatrix[i][j] / distanceMatrix[i][j];
+      } else {
+        newPheromoneMatrix[i][j] = newPheromoneMatrix[i][j] * rho;
+      }
+    }
+  }
+  pheromoneMatrix = newPheromoneMatrix;
+}
+
+const getIndexes = (route: number[]) => {
+  let indexes = new Array<{xIndex: number, yIndex: number}>();
+  // nie obchodzi nas droga powrotna do bazy
+  route = route.slice(0, -1);
+  for (let i = 0; i < route.length - 1; i++) {
+    indexes.push({ xIndex: route[i], yIndex: route[i+1]})
+  }
+  return indexes;
+}
+
+const displayRoute = (solution: Solution) => {
+  console.log('---------- Najlepsze znalezione rozwiązanie: ----------')
+  console.log('Final distance:', solution.totalDistance);
+  console.log('Final routes:');
+  for (let i = 0; i < solution.routes.length; i++) {
+    const route = solution.routes[i].route.map(r => (r > 0) ? appConfig.clients[r-1].name : appConfig.base.name);
+    console.log(`Car ${i+1}: `, 'Route: ', JSON.stringify(route), 'Route distance: ', solution.routes[i].distance);
+  }
+}
+
 const main = () => {
+  // KROK 1 - ZBIERAMY DANE
   appConfig = getConfig();
-  // dekonstruktor koks ale chyba lepiej mieć to globalnie
-  // let { distanceMatrix, pheromoneMatrix }  = createMatrixes();
+  // KROK 2 - POPULUJEMY TABLICE, w zmiennej matrixes trzymamy oryginalne dane, na innych mozna prowadzic dzialania
   const matrixes  = createMatrixes();
-  distanceMatrix = matrixes.distanceMatrix;
-  pheromoneMatrix = matrixes.pheromoneMatrix;
-  demandMatrix = matrixes.demandMatrix;
-  const x = getProbabilities({ locationIndex: 3});
-  console.log(x);
+  distanceMatrix = matrixes.distanceMatrix; // ta tablica jest niezmienna, trzymamy tu dystanse
+  pheromoneMatrix = matrixes.pheromoneMatrix; // ta tablica jest aktualizowana ale nie jest resetowana pomiedzy petlami
+  
+  // KROK 3 - zapetlamy algorytm
+  for (let i = 0; i < (!!appConfig.numberOfIterations ? appConfig.numberOfIterations : 1000); i++) {
+    demandMatrix = Object.assign([], matrixes.demandMatrix); // ta tablica jest resetowana na poczatku kazdej iteracji 
+    const currentSolution = getSolution();
+    if (!!bestSolution.totalDistance) {
+      bestSolution.totalDistance > currentSolution.totalDistance ? bestSolution = currentSolution : bestSolution;
+    } else {
+      bestSolution = currentSolution;
+    }
+    updateFeromones({solution: currentSolution, rho: appConfig.rho});
+    console.log('Solution found. Solution distance: ', currentSolution.totalDistance);
+  }
+  displayRoute(bestSolution);
 }
 
 main();
