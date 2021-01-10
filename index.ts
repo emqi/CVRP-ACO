@@ -34,6 +34,11 @@ interface Solution {
   totalDistance: number;
 }
 
+interface SavedResult {
+  config: AppConfig;
+  result: Solution;
+}
+
 // error handling dla zbudowanej apki - odkomentowac przed buildem
 // process.on("uncaughtException", function (err) {
 //   console.log(err);
@@ -196,8 +201,10 @@ const updateFeromones = ({solution, rho = 0.5}: {solution: Solution, rho?: numbe
   for (let i = 0; i < newPheromoneMatrix.length; i++) {
     for (let j = 0; j < newPheromoneMatrix.length; j++) {
       if (indexes.some(index => _.isEqual(index, { xIndex: i, yIndex: j}))) {
+        // wzor jezeli droga wystapila
         newPheromoneMatrix[i][j] = newPheromoneMatrix[i][j] * rho + newPheromoneMatrix[i][j] / distanceMatrix[i][j];
       } else {
+        // wzor jezeli droga nie wystapila
         newPheromoneMatrix[i][j] = newPheromoneMatrix[i][j] * rho;
       }
     }
@@ -225,6 +232,39 @@ const displayRoute = (solution: Solution) => {
   }
 }
 
+const saveBestResult = (solution: Solution) => {
+  const resultDir = "results/";
+  const resultFilename = "results/best.json";
+  if (fs.existsSync(resultFilename)) {
+    const bestResult: SavedResult = JSON.parse(fs.readFileSync(resultFilename));
+    const areConfigsEqual:boolean = compareConfigs(bestResult.config, appConfig);
+    console.log(areConfigsEqual);
+    if (areConfigsEqual) {
+      // jezeli configi sa tak same a nowy rezultat jest lepszy to informujemy uzytkownika i nadpisujemy
+      if (bestResult.result.totalDistance > solution.totalDistance) {
+        fs.writeFileSync(resultFilename, JSON.stringify({ config: appConfig, result: solution}, null, '\t'));
+        console.log();
+        console.log(`Nowe najlepsze rozwiązanie dla danej konfiguracji programu!`);
+        console.log('Poprzedni najlepszy rezultat wynosił: ', bestResult.result.totalDistance);
+      }
+    } else {
+      // nadpisujemy plik jezeli mamy nowy config
+      fs.writeFileSync(resultFilename, JSON.stringify({ config: appConfig, result: solution}, null, '\t'));
+    }
+  } else {
+    // tworzymy plik jezeli go nie bylo
+    fs.mkdirSync(resultDir)
+    fs.writeFileSync(resultFilename, JSON.stringify({ config: appConfig, result: solution}, null, '\t'));
+  }
+}
+
+const compareConfigs = (firstConfig: AppConfig, secondConfig: AppConfig): boolean => {
+    return firstConfig.numberOfCars === secondConfig.numberOfCars &&
+    firstConfig.carCapacity === secondConfig.carCapacity &&
+    _.isEqual(firstConfig.base, secondConfig.base) &&
+    _.isEqual(firstConfig.clients, secondConfig.clients)
+}
+
 const main = () => {
   // KROK 1 - ZBIERAMY DANE
   appConfig = getConfig();
@@ -246,6 +286,7 @@ const main = () => {
     console.log('Solution found. Solution distance: ', currentSolution.totalDistance);
   }
   displayRoute(bestSolution);
+  saveBestResult(bestSolution);
 }
 
 main();

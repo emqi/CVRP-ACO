@@ -1,1 +1,4 @@
 node_modules/
+results/
+params/
+!params/default.json
