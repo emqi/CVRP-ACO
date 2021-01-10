@@ -1,5 +1,6 @@
 import _ from 'lodash';
 const fs = require("fs");
+const prompt = require('prompt-sync')();
 
 interface Base {
   name: string;
@@ -39,15 +40,40 @@ interface Solution {
 //   process.stdin.resume();
 // });
 
-let appConfig: AppConfig;
+let appConfig: AppConfig; // jesli nie zostana dostarczone w configu to domyslnie alpha, beta = 1, rho = 0.5, liczba iteracji = 1000
 let distanceMatrix: number[][];
 let pheromoneMatrix: number[][];
 let demandMatrix: number[]; // demand działa jako tablica - kiedy demand dla lokacji spada do 0, zostaje wykluczona z dalszego losowania
 let bestSolution: Solution = { } as any;
 
 const getConfig = (): AppConfig => {
-  // TODO add custom config handling
-  let jsonData = JSON.parse(fs.readFileSync(__dirname + '/params/default.json'));
+  const paramFolder = 'params/'
+  let jsonData: AppConfig;
+  let availableParamsList = new Array<string>();
+  fs.readdirSync(paramFolder).forEach((filename: string) => {
+    if(filename.match(/.json$/i)) {
+      availableParamsList.push(filename);
+    }
+  });
+  if (availableParamsList.length === 0) {
+    console.error(`Brak pliku konfiguracyjnego - plik konfiguracyjny w formie pliku JSON powinien znajgować się w folderze "params" w katalogu root programu.`);
+    process.exit(0);
+  } else if (availableParamsList.length === 1) {
+    jsonData = JSON.parse(fs.readFileSync(paramFolder + availableParamsList[0]));
+  } else {
+    console.log("Dostępne pliki parametrów: ", availableParamsList);
+    const name = prompt('Wybierz plik, który powinien zostać załadowany: ');
+    if (!availableParamsList.includes(name)) {
+      console.error(`Brak pliku konfiguracyjnego o podanej nazwie. Sprawdź pisownię.`);
+      process.exit(0);
+    } else {
+      jsonData = JSON.parse(fs.readFileSync(paramFolder + name));
+    }
+  }
+  if (_.sumBy(jsonData.clients, 'demand') > jsonData.carCapacity * jsonData.numberOfCars) {
+    console.error(`Nieprawidłowa konfiguracja - calkowite zapotrzebowanie nie może być większe od łącznej ładowności samochodów!`);
+    process.exit(0);
+  }
   return { ...jsonData, numberOfClients: jsonData.clients.length };
 }
 
