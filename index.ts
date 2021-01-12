@@ -238,7 +238,6 @@ const saveBestResult = (solution: Solution) => {
   if (fs.existsSync(resultFilename)) {
     const bestResult: SavedResult = JSON.parse(fs.readFileSync(resultFilename));
     const areConfigsEqual:boolean = compareConfigs(bestResult.config, appConfig);
-    console.log(areConfigsEqual);
     if (areConfigsEqual) {
       // jezeli configi sa tak same a nowy rezultat jest lepszy to informujemy uzytkownika i nadpisujemy
       if (bestResult.result.totalDistance > solution.totalDistance) {
